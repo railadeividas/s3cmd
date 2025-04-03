@@ -484,8 +484,12 @@ class Config(object):
                     "Error reading aws_credential_file "
                     "(%s): %s" % (aws_credential_file, str(exc)))
 
-            # Use the profile from the parameter if provided, otherwise use the environment variable or default
-            profile = profile or base_unicodise(os.environ.get('AWS_PROFILE', "default"))
+            # Determine which profile to use based on priority:
+            # 1. Command-line option (profile parameter)
+            # 2. Environment variable (AWS_PROFILE)
+            # 3. Default to 'default' if neither is specified
+            if profile is None:
+                profile = base_unicodise(os.environ.get('AWS_PROFILE', "default"))
             debug("Using AWS profile '%s'" % (profile))
 
             # get_key - helper function to read the aws profile credentials
@@ -563,14 +567,21 @@ class Config(object):
         return retval
 
     def read_config_file(self, configfile, profile=None):
-        # If profile is specified, use it as the section name
-        sections = [profile] if profile else []
+        # Determine which profile to use based on priority:
+        # 1. Command-line option (profile parameter)
+        # 2. Environment variable (AWS_PROFILE)
+        # 3. Default to 'default' if neither is specified
+        if profile is None:
+            profile = os.environ.get('AWS_PROFILE', 'default')
+
+        # Use the determined profile as the section name
+        sections = [profile]
         cp = ConfigParser(configfile, sections)
 
-        # If no profile is specified or the profile section doesn't exist,
+        # If the specified profile section doesn't exist,
         # fall back to the default section
-        if not profile or not cp.cfg:
-            cp = ConfigParser(configfile, [])
+        if not cp.cfg:
+            cp = ConfigParser(configfile, ["default"])
 
         for option in self.option_list():
             _option = cp.get(option)
