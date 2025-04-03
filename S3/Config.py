@@ -261,18 +261,19 @@ class Config(object):
     max_retries = 5
 
     ## Creating a singleton
-    def __new__(self, configfile = None, access_key=None, secret_key=None, access_token=None):
+    def __new__(self, configfile = None, access_key=None, secret_key=None, access_token=None, profile=None):
         if self._instance is None:
             self._instance = object.__new__(self)
         return self._instance
 
-    def __init__(self, configfile = None, access_key=None, secret_key=None, access_token=None):
+    def __init__(self, configfile = None, access_key=None, secret_key=None, access_token=None, profile=None):
         if configfile:
+            debug("Config: Initializing with config file '%s', profile '%s'" % (configfile, profile))
             try:
-                self.read_config_file(configfile)
+                self.read_config_file(configfile, profile)
             except IOError:
                 if 'AWS_SHARED_CREDENTIALS_FILE' in os.environ or 'AWS_CREDENTIAL_FILE' in os.environ or 'AWS_PROFILE' in os.environ:
-                    self.aws_credential_file()
+                    self.aws_credential_file(profile)
 
             # override these if passed on the command-line
             # Allow blank secret_key
@@ -335,7 +336,7 @@ class Config(object):
                     '%s=%s' % (k, s3_quote(v, unicode_output=True))
                     for k, v in params.items()
                 ])
-                sts_endpoint = os.environ.get("AWS_STS_ENDPOINT", sts_endpoint) 
+                sts_endpoint = os.environ.get("AWS_STS_ENDPOINT", sts_endpoint)
                 if os.environ.get("AWS_STS_REGIONAL_ENDPOINTS") == "regional":
                     # Check if the AWS_REGION variable is available to use as a region.
                     region = os.environ.get("AWS_REGION")
@@ -441,7 +442,7 @@ class Config(object):
             except Exception:
                 warning("Could not refresh role")
 
-    def aws_credential_file(self):
+    def aws_credential_file(self, profile=None):
         try:
             aws_credential_file = os.path.expanduser('~/.aws/credentials')
             credential_file_from_env = os.environ.get('AWS_SHARED_CREDENTIALS_FILE') \
@@ -450,6 +451,7 @@ class Config(object):
                os.path.isfile(credential_file_from_env):
                 aws_credential_file = base_unicodise(credential_file_from_env)
             elif not os.path.isfile(aws_credential_file):
+                debug("AWS credentials file not found at %s" % aws_credential_file)
                 return
 
             config = PyConfigParser()
@@ -482,7 +484,8 @@ class Config(object):
                     "Error reading aws_credential_file "
                     "(%s): %s" % (aws_credential_file, str(exc)))
 
-            profile = base_unicodise(os.environ.get('AWS_PROFILE', "default"))
+            # Use the profile from the parameter if provided, otherwise use the environment variable or default
+            profile = profile or base_unicodise(os.environ.get('AWS_PROFILE', "default"))
             debug("Using AWS profile '%s'" % (profile))
 
             # get_key - helper function to read the aws profile credentials
@@ -559,8 +562,16 @@ class Config(object):
             retval.append(option)
         return retval
 
-    def read_config_file(self, configfile):
-        cp = ConfigParser(configfile)
+    def read_config_file(self, configfile, profile=None):
+        # If profile is specified, use it as the section name
+        sections = [profile] if profile else []
+        cp = ConfigParser(configfile, sections)
+
+        # If no profile is specified or the profile section doesn't exist,
+        # fall back to the default section
+        if not profile or not cp.cfg:
+            cp = ConfigParser(configfile, [])
+
         for option in self.option_list():
             _option = cp.get(option)
             if _option is not None:
@@ -655,20 +666,29 @@ class ConfigParser(object):
         debug("ConfigParser: Reading file '%s'" % file)
         if type(sections) != type([]):
             sections = [sections]
-        in_our_section = True
+
+        if sections:
+            debug("ConfigParser: Looking for sections: %s" % sections)
+        else:
+            debug("ConfigParser: Reading default section")
+
+        in_our_section = len(sections) == 0  # If no sections specified, read all
+        current_section = "default"
         r_comment = re.compile(r'^\s*#.*')
         r_empty = re.compile(r'^\s*$')
         r_section = re.compile(r'^\[([^\]]+)\]')
         r_data = re.compile(r'^\s*(?P<key>\w+)\s*=\s*(?P<value>.*)')
         r_quotes = re.compile(r'^"(.*)"\s*$')
+
         with io.open(file, "r", encoding=self.get('encoding', 'UTF-8')) as fp:
             for line in fp:
                 if r_comment.match(line) or r_empty.match(line):
                     continue
                 is_section = r_section.match(line)
                 if is_section:
-                    section = is_section.groups()[0]
-                    in_our_section = (section in sections) or (len(sections) == 0)
+                    current_section = is_section.groups()[0]
+                    in_our_section = (current_section in sections) or (len(sections) == 0)
+                    debug("ConfigParser: Found section '%s', reading: %s" % (current_section, in_our_section))
                     continue
                 is_data = r_data.match(line)
                 if is_data and in_our_section:
@@ -681,6 +701,9 @@ class ConfigParser(object):
                     else:
                         print_value = data["value"]
                     debug("ConfigParser: %s->%s" % (data["key"], print_value))
+                    continue
+                if is_data and not in_our_section:
+                    # Skip data in sections we're not interested in
                     continue
                 warning("Ignoring invalid line in '%s': %s" % (file, line))
 
