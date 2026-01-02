@@ -451,7 +451,6 @@ class Config(object):
                os.path.isfile(credential_file_from_env):
                 aws_credential_file = base_unicodise(credential_file_from_env)
             elif not os.path.isfile(aws_credential_file):
-                debug("AWS credentials file not found at %s" % aws_credential_file)
                 return
 
             config = PyConfigParser()
@@ -484,10 +483,6 @@ class Config(object):
                     "Error reading aws_credential_file "
                     "(%s): %s" % (aws_credential_file, str(exc)))
 
-            # Determine which profile to use based on priority:
-            # 1. Command-line option (profile parameter)
-            # 2. Environment variable (AWS_PROFILE)
-            # 3. Default to 'default' if neither is specified
             if profile is None:
                 profile = base_unicodise(os.environ.get('AWS_PROFILE', "default"))
             debug("Using AWS profile '%s'" % (profile))
@@ -567,21 +562,12 @@ class Config(object):
         return retval
 
     def read_config_file(self, configfile, profile=None):
-        # Determine which profile to use based on priority:
-        # 1. Command-line option (profile parameter)
-        # 2. Environment variable (AWS_PROFILE)
-        # 3. Default to 'default' if neither is specified
         if profile is None:
             profile = os.environ.get('AWS_PROFILE', 'default')
 
-        # Use the determined profile as the section name
-        sections = [profile]
-        cp = ConfigParser(configfile, sections)
-
-        # If the specified profile section doesn't exist,
-        # fall back to the default section
-        if not cp.cfg:
-            cp = ConfigParser(configfile, ["default"])
+        cp = ConfigParser(configfile, ["default"])
+        if profile and profile != "default":
+            cp.parse_file(configfile, [profile])
 
         for option in self.option_list():
             _option = cp.get(option)
@@ -677,20 +663,13 @@ class ConfigParser(object):
         debug("ConfigParser: Reading file '%s'" % file)
         if type(sections) != type([]):
             sections = [sections]
-
-        if sections:
-            debug("ConfigParser: Looking for sections: %s" % sections)
-        else:
-            debug("ConfigParser: Reading default section")
-
-        in_our_section = len(sections) == 0  # If no sections specified, read all
+        in_our_section = not sections  # If no sections specified, read all
         current_section = "default"
         r_comment = re.compile(r'^\s*#.*')
         r_empty = re.compile(r'^\s*$')
         r_section = re.compile(r'^\[([^\]]+)\]')
         r_data = re.compile(r'^\s*(?P<key>\w+)\s*=\s*(?P<value>.*)')
         r_quotes = re.compile(r'^"(.*)"\s*$')
-
         with io.open(file, "r", encoding=self.get('encoding', 'UTF-8')) as fp:
             for line in fp:
                 if r_comment.match(line) or r_empty.match(line):
@@ -698,8 +677,7 @@ class ConfigParser(object):
                 is_section = r_section.match(line)
                 if is_section:
                     current_section = is_section.groups()[0]
-                    in_our_section = (current_section in sections) or (len(sections) == 0)
-                    debug("ConfigParser: Found section '%s', reading: %s" % (current_section, in_our_section))
+                    in_our_section = (current_section in sections) or (not sections)
                     continue
                 is_data = r_data.match(line)
                 if is_data and in_our_section:
