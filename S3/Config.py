@@ -483,7 +483,7 @@ class Config(object):
                     "Error reading aws_credential_file "
                     "(%s): %s" % (aws_credential_file, str(exc)))
 
-            if profile is None:
+            if not profile:
                 profile = base_unicodise(os.environ.get('AWS_PROFILE', "default"))
             debug("Using AWS profile '%s'" % (profile))
 
@@ -562,7 +562,7 @@ class Config(object):
         return retval
 
     def read_config_file(self, configfile, profile=None):
-        if profile is None:
+        if not profile:
             profile = os.environ.get('AWS_PROFILE', 'default')
 
         cp = ConfigParser(configfile, ["default"])
